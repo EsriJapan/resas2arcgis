@@ -72,7 +72,8 @@ public class IndexAction {
 	 * AGOL params
 	 * */
 	public static final String mQuery = "/query";
-	public static final String mAgolQuery = "where=(1=1)&outFields=JCODE,FID&f=json&returnGeometry=false";
+	public static final String mAgolField = "where=(1=1)&outFields=JCODE,FID,";
+	public static final String mAgolQuery = "&f=json&returnGeometry=false";
 	public static final String mApplyEdits = "/applyEdits";
 	public static final String mApplyEditsReq = "f=json&updates=";
 
@@ -80,15 +81,15 @@ public class IndexAction {
      * perce for new json
      * */
     public static final String mSeparator = "/";
-//    public static final String mCityCode = "cityCode";
     public static final String mResult = "result";
     public static final String mSuffix = "n";
-
+    static ArrayList<ResasfieldStr> mJsonKeyList;
+    static int nIndex = 0;
 
     @POST
 	@Path("/putMessage")
 	@Produces(MediaType.APPLICATION_JSON)
-	public void put(@FormParam("resasurl") String resasurl,
+	public MyData put(@FormParam("resasurl") String resasurl,
 			@FormParam("mappingfact") String mappingfact,
 			@FormParam("resaskey") String resaskey,
 			@FormParam("agollayer") String agollayer,
@@ -116,25 +117,45 @@ public class IndexAction {
 		mPramMap.put(PramKey_uniqField, ufield);
 		mPramMap.put(PramKey_newField, nfield);
 
-		updateData();
+		return updateData();
 	}
 
 	/**
 	 * perse data
 	 * call update task
 	 * */
-	public static boolean updateData(){
+	public static MyData updateData(){
 
+		boolean dataFlg = false;
+		MyData myData = new MyData();
 		// agolのレイヤーを取得する
-		collectionGeometry(mPramMap.get(PramKey_agolURL));
+		dataFlg = collectionGeometry(mPramMap.get(PramKey_agolURL));
+		if(!dataFlg){
+
+			myData.setId(1);
+			myData.setMessage("ArcGIS フィーチャ レイヤーへアクセスできませんでした");
+			return myData;
+		}
 		// resasのデータをcallする
-		boolean dataFlg = getResasData(mPramMap.get(PramKey_resasURL), mPramMap.get(PramKey_resasKey));
+		dataFlg = getResasData(mPramMap.get(PramKey_resasURL), mPramMap.get(PramKey_resasKey));
 		// パラメータに沿ってデータを作成する::指定フィールドの検索処理
 		// agolを更新する
 		if(dataFlg){
-			updateSpotCount(mPramMap.get(PramKey_agolURL));
+			dataFlg = updateAgolLayer(mPramMap.get(PramKey_agolURL));
+			if(dataFlg){
+				myData.setId(0);
+				myData.setMessage("更新に成功しました");
+				return myData;
+			}else{
+				myData.setId(3);
+				myData.setMessage("更新に失敗しました");
+				return myData;
+			}
+		}else{
+			myData.setId(2);
+			myData.setMessage("RESAS API へアクセスできませんでした");
+			return myData;
 		}
-		return true;
 
 	}
 
@@ -144,7 +165,8 @@ public class IndexAction {
     public static boolean collectionGeometry(String pAgolLayer){
 
     	// String想定 : http://***/0 まで
-        JSONObject result = getArcGISRequest(pAgolLayer + mQuery, mAgolQuery);
+    	// Agolで指定された引数のfieldもoutfieldsに追加する
+        JSONObject result = getArcGISRequest(pAgolLayer + mQuery, mAgolField + mPramMap.get(PramKey_uniqField) + mAgolQuery);
         try {
 			createRecestGeometryList(result);
 		} catch (JSONException e) {
@@ -186,44 +208,57 @@ public class IndexAction {
 			 if(resasResut.get(mResult).equals(null)){
 				 return false;
 			 }
-			 // data Dispath
-			 if(LoopFlg){
-				 // TODO loopdata
-
+	         // "n"を含むものか精査する。
+			 if(chkSuffix()){
+				 // pattern1
+				 makeUpdateListLoop(resasResut);
 			 }else{
 				 // nomaldata:pattern1
 				 // updateリストの作成
-				 makeUpdateList(dispatchResasData(resasResut));
+				 // pattern2
+				 // mappingfieldの値を取得する
+				 makeUpdateList(dispatchResasData(resasResut),getMappingFieldfact(resasResut));
 			 }
-
 		} catch (org.json.JSONException e) {
 			e.printStackTrace();
 			return false;
 		}
-
     	return true;
     }
 
     /**
-     * data dispatch flg
-     * */
-    static boolean LoopFlg = false;
-
-    /**
-     * resas data dispatcher
+     * 指定されたコードの内容を取得する
+     * resas data or url
      * @throws JSONException
      *
      * */
-    static Object dispatchResasData(JSONObject pResasResut) throws JSONException{
+    public static String getMappingFieldfact(JSONObject pResasResut) throws JSONException{
 
-        // citycode = JCODE
-        mUpdateList = new ArrayList<JSONObject>();
+        // citycodeの取得
+        String resasUrl = mPramMap.get(PramKey_resasURL);
+        // ? までを切って&で配列にして=から最後までの文字列を取得する:cityCode=-&
+        String[] request = resasUrl.substring(resasUrl.indexOf("?")+1, resasUrl.length()).split("&");
+        for(String param : request){
+        	if(param.startsWith(mPramMap.get(PramKey_mappingFact))){
+        		return  param.substring(mPramMap.get(PramKey_mappingFact).length()+1, param.length());
+        	}
+        }
+        // resultのすぐ下にあると決めつける。
+        return pResasResut.getJSONObject(mResult).getJSONObject(mPramMap.get(PramKey_mappingFact)).toString();
 
-        // 指定のパラメータを解析してデータを取得する
+    }
+
+    /**
+     * suffix check
+     * */
+    static boolean chkSuffix(){
+		boolean loopFlg = false;
+		nIndex = 0;
+
+    	// 配列の添え字チェック(int or n)
+    	// json Key の格納
         String[] getKey = mPramMap.get(PramKey_importField).split(mSeparator);
-
-        JSONObject perseObj = null;
-        Object lastObj = null;
+        mJsonKeyList = new ArrayList<ResasfieldStr>();
 
         for(int i = 0; i < getKey.length ;i++){
 
@@ -231,56 +266,102 @@ public class IndexAction {
         	if(getKey[i].endsWith("]")){
         		// 配列のとき
         		String Jsonkey = getKey[i].substring(0, getKey[i].indexOf("["));
-
-        		// 数値がnか？
         		String suffix = getKey[i].substring(getKey[i].indexOf("[")+1, getKey[i].length()-1);
+        		mJsonKeyList.add(setStr(Jsonkey, suffix));
         		if(suffix.equals(mSuffix)){
         			// ループできるデータの場合
-        			LoopFlg = true;
-        			// null で速攻返す。
-        			return lastObj;
-        		}else{
-        			// 数値の場合
-            		int indexNum = Integer.parseInt(suffix);
-            		perseObj = perseObj.getJSONArray(Jsonkey).getJSONObject(indexNum);
+        			loopFlg = true;
+        			nIndex = i;
         		}
         	}else{
         		// keyのとき
+        		mJsonKeyList.add(setStr(getKey[i],null));
+        	}
+        }
+        return loopFlg;
+    }
+
+    /**
+     * 構造体用の内部クラス.
+     *
+     */
+    private static class ResasfieldStr {
+        String jsonKey;
+        String suffix;
+    }
+
+    /**
+     * 構造体に値をセット.
+     * @param pJsonKey
+     * @param pSuffix
+     * @return
+     */
+    public static ResasfieldStr setStr(String pJsonKey, String pSuffix) {
+    	ResasfieldStr str = new ResasfieldStr();
+        str.jsonKey = pJsonKey;
+        str.suffix = pSuffix;
+        return str;
+    }
+
+
+    /**
+     * resas data dispatcher
+     * @throws JSONException
+     * 指定の値を入力したいとき
+     *
+     * */
+    static Object dispatchResasData(JSONObject pResasResut) throws JSONException{
+
+        // citycode = JCODE
+        mUpdateList = new ArrayList<JSONObject>();
+        JSONObject perseObj = null;
+        Object lastObj = null;
+
+        // resasFeildStructure から作成したリストで回す。
+        for(int i = 0; i < mJsonKeyList.size() ;i++ ){
+
+        	if(mJsonKeyList.get(i).suffix == null){
+        		// Keyのみのとき
         		if(perseObj == null){
-            		perseObj = pResasResut.getJSONObject(getKey[i]);
+            		perseObj = pResasResut.getJSONObject(mJsonKeyList.get(i).jsonKey);
         		}else{
-        			if(i == getKey.length-1){
+        			if(i == mJsonKeyList.size() -1){
         				// 最後のオブジェクトのとき
-        				lastObj = perseObj.get(getKey[i]);
+        				lastObj = perseObj.get(mJsonKeyList.get(i).jsonKey);
         			}else{
-        				perseObj = perseObj.getJSONObject(getKey[i]);
+        				perseObj = perseObj.getJSONObject(mJsonKeyList.get(i).jsonKey);
         			}
         		}
+        	}else{
+        		// 配列のとき
+        		int indexNum = Integer.parseInt(mJsonKeyList.get(i).suffix);
+        		perseObj = perseObj.getJSONArray(mJsonKeyList.get(i).jsonKey).getJSONObject(indexNum);
         	}
         }
         return lastObj;
     }
 
+    static Pattern mPattern = Pattern.compile("[0-9]");
+
     /**
      * create update list
      * pattern1data
      * */
-    static boolean makeUpdateList(Object pObject) throws org.json.JSONException{
+    static boolean makeUpdateList(Object pObject,String pMappingValue) throws org.json.JSONException{
 
-        if(mPolygonList.containsKey(mPramMap.get(PramKey_mappingFact))){
-            JSONObject jsonobj = mPolygonList.get(mPramMap.get(PramKey_mappingFact));
 
+    	// 指定コードの値が必要！
+        if(mPolygonList.containsKey(pMappingValue)){
+            JSONObject jsonobj = mPolygonList.get(pMappingValue);
             JSONObject updatejson = new JSONObject();
+
             // 更新するarcgisのfield名の取得
-            String field = mPramMap.get(PramKey_newField);
-            String regex = "[0-9]";
-            Pattern p = Pattern.compile(regex);
-            if(p.matcher(pObject.toString()).find()){
+            if(mPattern.matcher(pObject.toString()).find()){
             	// int
-                updatejson.accumulate(mAttributes, jsonobj.getJSONObject(mAttributes).accumulate(field, Integer.parseInt(pObject.toString())));
+                updatejson.accumulate(mAttributes, jsonobj.getJSONObject(mAttributes).accumulate(mPramMap.get(PramKey_newField), Integer.parseInt(pObject.toString())));
             }else{
             	// String
-                updatejson.accumulate(mAttributes, jsonobj.getJSONObject(mAttributes).accumulate(field, pObject.toString()));
+                updatejson.accumulate(mAttributes, jsonobj.getJSONObject(mAttributes).accumulate(mPramMap.get(PramKey_newField), pObject.toString()));
             }
             mUpdateList.add(updatejson);
         }
@@ -291,54 +372,59 @@ public class IndexAction {
     }
 
     /**
-     * create update list
-     * pattern2data:futurePopration
+     * resas data dispatcher
+     * @throws JSONException
+     * 指定の値を入力したいとき
+     *
      * */
-    static boolean makeUpdateListLoop(Object pObject) throws org.json.JSONException{
+    static void makeUpdateListLoop(JSONObject pResasResut) throws JSONException{
 
-    	// resultの中身まで入っている
+        mUpdateList = new ArrayList<JSONObject>();
+        JSONObject perseObj = null;
+        JSONObject jsonTmpObj;
 
-        try {
-            JSONArray resasResult =  ((JSONObject)pObject).getJSONArray("cities");
-            for(int i=0 ;i < resasResult.length();i++){
+        // resasFeildStructure から作成したリストで回す。
+        for(int i = 0; i < mJsonKeyList.size() ;i++ ){
 
-                String citycode = resasResult.getJSONObject(i).get("cityCode").toString();
-                if(mPolygonList.containsKey(citycode)){
-                    JSONObject jsonobj = mPolygonList.get(citycode);
+        	if(mJsonKeyList.get(i).suffix == null){
+        		// Keyのみのとき
+        		perseObj = pResasResut.getJSONObject(mJsonKeyList.get(i).jsonKey);
+        	}else{
+        		// 配列のとき=n;必ず
+        		// 要素の数でリストを回す
+        		// nのしたには必ず最後の要素があるとするnのパターンは考えない
+        		// mJsonKeyList + 1で下の要素を指すことにする
+        		JSONArray arrayResult = perseObj.getJSONArray(mJsonKeyList.get(i).jsonKey);
+                for(int j =0 ;j < arrayResult.length();j++){
 
-                    JSONObject hogehoge = new JSONObject();
-                    hogehoge.accumulate(mAttributes, jsonobj.getJSONObject(mAttributes).accumulate(mPramMap.get(PramKey_newField), resasResult.getJSONObject(i).get(mValue)));
-                    mUpdateList.add(hogehoge);
+                	// もし、mappingFieldがPrefCodeならばRESAS から取得できるデータをString2桁に変更する
+                	String mapvalue  = arrayResult.getJSONObject(j).get(mPramMap.get(PramKey_mappingFact)).toString();
+                	if(mPramMap.get(PramKey_mappingFact).equals("prefCode")){
+                		mapvalue = null;
+                		mapvalue = String.format("%02d",Integer.valueOf(arrayResult.getJSONObject(j).get(mPramMap.get(PramKey_mappingFact)).toString()));
+                	}
+
+                    if(mPolygonList.containsKey(mapvalue.toString())){
+                    	// citycodeが取得できるはず
+//                    	String contedKey = arrayResult.getJSONObject(j).get(mPramMap.get(PramKey_mappingFact)).toString();
+                    	// ポリゴンリストから該当したarcの要素を出す。
+                        JSONObject jsonobj = mPolygonList.get(mapvalue);
+//                        JSONObject jsonobj = mPolygonList.get(contedKey);
+                        jsonTmpObj = new JSONObject();
+                        jsonTmpObj.accumulate(mAttributes, jsonobj.getJSONObject(mAttributes).accumulate(mPramMap.get(PramKey_newField), arrayResult.getJSONObject(j).get(mJsonKeyList.get(i+1).jsonKey)));
+                        mUpdateList.add(jsonTmpObj);
+                    }
                 }
-            }
-            System.out.println("update list is ok?");
-//            updateSpotCount();
-
-        } catch (JSONException e) {
-            // TODO 自動生成された catch ブロック
-            e.printStackTrace();
+        		// listへの格納が終わったらloopは抜ける
+                return;
+        	}
         }
-
-
-        // JSONオブジェクトからリストを作成する
-    	JSONArray features = ((JSONObject)pObject).getJSONArray(mFeatures);
-//        JSONArray features = pJsonObject.getJSONArray(mFeatures);
-        System.out.println("Response:" + "hogehoge");
-        mPolygonList = new HashMap<String,JSONObject>();
-        for(int i = 0 ; i < features.length();i++){
-        	// TODO jscode のかわりをいれる
-
-            mPolygonList.put(features.getJSONObject(i).getJSONObject(mAttributes)
-                    .getString("JCODE"), features.getJSONObject(i));
-        }
-        return true;
-
     }
 
     /**
      * update agol
      * */
-    static boolean  updateSpotCount(String pAgolLayer){
+    static boolean  updateAgolLayer(String pAgolLayer){
 
         // REST CALL
         JSONObject result = getArcGISRequest(pAgolLayer + mApplyEdits,mApplyEditsReq + mUpdateList.toString() );
