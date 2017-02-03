@@ -1,4 +1,4 @@
-﻿﻿##resas2arcgis
+# resas2arcgis
  
  このサービスは [RESAS API](https://opendata.resas-portal.go.jp/) から取得できるデータを ArcGIS へ簡単に入力できるようにした開発したサービスです。<br>
   <img src="http://apps.esrij.com/arcgis-dev/github/img/resas2arcgis.png" >
