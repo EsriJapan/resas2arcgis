@@ -7,9 +7,10 @@
  
  > 内閣官房（まち・ひと・しごと創生本部事務局）が地方創生の実現に向けて、地域に紐付いた官民ビッグデータ（産業、人口、観光、農業等）を分かりやすく「見える化」したシステムです。
  
- * デモ
- 
- [resas2arcgis on Heroku](https://resas2arcgis.herokuapp.com/)
+ <!-- 
+  * デモ
+[resas2arcgis on Heroku](https://resas2arcgis.herokuapp.com/) 
+-->
  
 ## API 仕様
 
